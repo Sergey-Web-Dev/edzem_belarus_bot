@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
 import { Markup, Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import type { Context } from "telegraf";
@@ -34,6 +35,7 @@ const parseIds = (ids: string | undefined) =>
 const token = process.env.BOT_TOKEN;
 const adminIds = parseIds(process.env.ADMIN_IDS);
 const creatorIds = parseIds(process.env.CREATOR_IDS);
+const healthCheckPort = Number(process.env.PORT ?? 10000);
 
 if (!token) {
   throw new Error("BOT_TOKEN is required. Add it to your .env file.");
@@ -43,6 +45,13 @@ const bot = new Telegraf(token);
 const quizStates = new Map<number, QuizState>();
 const accessRequiredMessage = "Для доступа к квесту нужен одноразовый код из сертификата или QR-кода.";
 const lockedUserMessage = "Ты уже начал или прошёл квест. Повторное прохождение с этого профиля недоступно.";
+
+createServer((_request, response) => {
+  response.writeHead(200);
+  response.end("Bot is running!");
+}).listen(healthCheckPort, "0.0.0.0", () => {
+  console.log(`Health check listening on port ${healthCheckPort}`);
+});
 
 const normalizeText = (text: string) => text.trim().toLowerCase();
 
