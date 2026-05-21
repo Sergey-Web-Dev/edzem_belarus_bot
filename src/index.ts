@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { randomBytes } from "node:crypto";
-import { Telegraf } from "telegraf";
+import { Markup, Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import type { Context } from "telegraf";
 
@@ -21,15 +21,19 @@ type QuizState = {
   wrongAnswers: number;
 };
 
+const parseIds = (ids: string | undefined) =>
+  new Set(
+    (ids ?? "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .map((id) => Number(id))
+      .filter((id) => Number.isInteger(id)),
+  );
+
 const token = process.env.BOT_TOKEN;
-const adminIds = new Set(
-  (process.env.ADMIN_IDS ?? "")
-    .split(",")
-    .map((adminId) => adminId.trim())
-    .filter(Boolean)
-    .map((adminId) => Number(adminId))
-    .filter((adminId) => Number.isInteger(adminId)),
-);
+const adminIds = parseIds(process.env.ADMIN_IDS);
+const creatorIds = parseIds(process.env.CREATOR_IDS);
 
 if (!token) {
   throw new Error("BOT_TOKEN is required. Add it to your .env file.");
@@ -65,6 +69,7 @@ const getUserId = (ctx: Context) => {
 };
 
 const isAdmin = (userId: number) => adminIds.has(userId);
+const canManageAccessCodes = (userId: number) => isAdmin(userId) || creatorIds.has(userId);
 
 const getStartPayload = (text: string) => {
   const [, payload] = text.trim().split(/\s+/, 2);
@@ -103,6 +108,63 @@ const createAccessCodes = async (ctx: Context, count: number) => {
   const links = await Promise.all(codes.map(async (code) => `${code}\n${await getAccessLink(ctx, code)}`));
 
   await ctx.reply(links.join("\n\n"));
+};
+
+const showAccessCodeMenu = async (ctx: Context) => {
+  await ctx.reply(
+    "Управление кодами доступа:",
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback("Создать 1 код", "codes:create:1"),
+        Markup.button.callback("Создать 5 кодов", "codes:create:5"),
+      ],
+      [Markup.button.callback("Создать 10 кодов", "codes:create:10")],
+      [
+        Markup.button.callback("Активные коды", "codes:list"),
+        Markup.button.callback("Отозвать код", "codes:revoke-menu"),
+      ],
+    ]),
+  );
+};
+
+const assertCanManageAccessCodes = async (ctx: Context) => {
+  const userId = getUserId(ctx);
+
+  if (canManageAccessCodes(userId)) {
+    return true;
+  }
+
+  await ctx.reply("Команда доступна только администратору или креатору.");
+  return false;
+};
+
+const showActiveAccessCodes = async (ctx: Context) => {
+  const activeCodes = await accessCodesStorage.listActive();
+
+  if (activeCodes.length === 0) {
+    await ctx.reply("Активных кодов нет.");
+    return;
+  }
+
+  await ctx.reply(activeCodes.map((accessCode) => accessCode.code).join("\n"));
+};
+
+const showRevokeAccessCodeMenu = async (ctx: Context) => {
+  const activeCodes = await accessCodesStorage.listActive(10);
+
+  if (activeCodes.length === 0) {
+    await ctx.reply("Нет активных кодов для отзыва.");
+    return;
+  }
+
+  await ctx.reply(
+    "Выбери код, который нужно отозвать:",
+    Markup.inlineKeyboard(
+      activeCodes.map((accessCode) => [
+        Markup.button.callback(accessCode.code, `codes:revoke:${accessCode.code}`),
+      ]),
+    ),
+  );
 };
 
 const getQuestionMessage = (questionIndex: number) => {
@@ -184,7 +246,7 @@ bot.start(async (ctx) => {
 
   const redeemResult = await accessCodesStorage.redeem(startPayload, userId);
 
-  if (redeemResult === "not_found" || redeemResult === "already_used") {
+  if (redeemResult === "not_found" || redeemResult === "already_used" || redeemResult === "revoked") {
     await ctx.reply("Код доступа недействителен или уже использован.");
     return;
   }
@@ -192,11 +254,16 @@ bot.start(async (ctx) => {
   await ctx.reply(WELCOME_MESSAGE);
 });
 
-bot.command("createcode", async (ctx) => {
-  const adminId = getUserId(ctx);
+bot.command("create", async (ctx) => {
+  if (!(await assertCanManageAccessCodes(ctx))) {
+    return;
+  }
 
-  if (!isAdmin(adminId)) {
-    await ctx.reply("Команда доступна только администратору.");
+  await showAccessCodeMenu(ctx);
+});
+
+bot.command("createcode", async (ctx) => {
+  if (!(await assertCanManageAccessCodes(ctx))) {
     return;
   }
 
@@ -204,10 +271,7 @@ bot.command("createcode", async (ctx) => {
 });
 
 bot.command("createcodes", async (ctx) => {
-  const adminId = getUserId(ctx);
-
-  if (!isAdmin(adminId)) {
-    await ctx.reply("Команда доступна только администратору.");
+  if (!(await assertCanManageAccessCodes(ctx))) {
     return;
   }
 
@@ -220,6 +284,55 @@ bot.command("createcodes", async (ctx) => {
   }
 
   await createAccessCodes(ctx, count);
+});
+
+bot.action(/^codes:create:(1|5|10)$/, async (ctx) => {
+  if (!canManageAccessCodes(getUserId(ctx))) {
+    await ctx.answerCbQuery("Нет доступа.");
+    return;
+  }
+
+  await ctx.answerCbQuery();
+  await createAccessCodes(ctx, Number(ctx.match[1]));
+});
+
+bot.action("codes:list", async (ctx) => {
+  if (!canManageAccessCodes(getUserId(ctx))) {
+    await ctx.answerCbQuery("Нет доступа.");
+    return;
+  }
+
+  await ctx.answerCbQuery();
+  await showActiveAccessCodes(ctx);
+});
+
+bot.action("codes:revoke-menu", async (ctx) => {
+  if (!canManageAccessCodes(getUserId(ctx))) {
+    await ctx.answerCbQuery("Нет доступа.");
+    return;
+  }
+
+  await ctx.answerCbQuery();
+  await showRevokeAccessCodeMenu(ctx);
+});
+
+bot.action(/^codes:revoke:(EDZEM-[A-F0-9]+)$/, async (ctx) => {
+  const userId = getUserId(ctx);
+
+  if (!canManageAccessCodes(userId)) {
+    await ctx.answerCbQuery("Нет доступа.");
+    return;
+  }
+
+  const revokeResult = await accessCodesStorage.revoke(ctx.match[1], userId);
+
+  if (revokeResult !== "revoked") {
+    await ctx.answerCbQuery("Код уже нельзя отозвать.");
+    return;
+  }
+
+  await ctx.answerCbQuery("Код отозван.");
+  await ctx.editMessageText(`Код ${ctx.match[1]} отозван.`);
 });
 
 bot.command("reset", async (ctx) => {

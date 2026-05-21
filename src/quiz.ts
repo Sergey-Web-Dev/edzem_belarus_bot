@@ -117,8 +117,8 @@ export const quizQuestions: QuizQuestion[] = [
   },
   {
     text: "ВИШНЕВО\n\n2. Сколько шагов от костёла до церкви в д. Вишнево?",
-    correctAnswer: "любое число от 100 до 600",
-    isCorrect: numberInRange(100, 600),
+    correctAnswer: "любое число от 100 до 1000",
+    isCorrect: numberInRange(100, 1000),
   },
   {
     text: "ВИШНЕВО\n\n3. К какому типу храмов в народе относят церковь св. Космы и Дамиана в д. Вишнево? В ответе укажи цифру.",

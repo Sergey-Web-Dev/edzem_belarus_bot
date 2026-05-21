@@ -7,6 +7,8 @@ export type AccessCode = {
   code: string;
   createdAt: string;
   createdBy: number;
+  revokedAt?: string;
+  revokedBy?: number;
   usedAt?: string;
   usedBy?: number;
 };
@@ -74,6 +76,15 @@ export const accessCodesStorage = {
     return storage.codes.some((accessCode) => accessCode.usedBy === userId);
   },
 
+  async listActive(limit = 20) {
+    const storage = await readStorage();
+
+    return storage.codes
+      .filter((accessCode) => accessCode.usedBy === undefined && accessCode.revokedAt === undefined)
+      .slice(-limit)
+      .reverse();
+  },
+
   async redeem(code: string, userId: number) {
     const normalizedCode = normalizeCode(code);
     const storage = await readStorage();
@@ -81,6 +92,10 @@ export const accessCodesStorage = {
 
     if (!accessCode) {
       return "not_found" as const;
+    }
+
+    if (accessCode.revokedAt !== undefined) {
+      return "revoked" as const;
     }
 
     if (accessCode.usedBy === userId) {
@@ -106,5 +121,39 @@ export const accessCodesStorage = {
     });
 
     return "redeemed" as const;
+  },
+
+  async revoke(code: string, revokedBy: number) {
+    const normalizedCode = normalizeCode(code);
+    const storage = await readStorage();
+    const accessCode = storage.codes.find((storedCode) => storedCode.code === normalizedCode);
+
+    if (!accessCode) {
+      return "not_found" as const;
+    }
+
+    if (accessCode.usedBy !== undefined) {
+      return "already_used" as const;
+    }
+
+    if (accessCode.revokedAt !== undefined) {
+      return "already_revoked" as const;
+    }
+
+    await writeStorage({
+      codes: storage.codes.map((storedCode) => {
+        if (storedCode.code !== normalizedCode) {
+          return storedCode;
+        }
+
+        return {
+          ...storedCode,
+          revokedAt: new Date().toISOString(),
+          revokedBy,
+        };
+      }),
+    });
+
+    return "revoked" as const;
   },
 };
