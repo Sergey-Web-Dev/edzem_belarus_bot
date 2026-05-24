@@ -16,6 +16,7 @@ import {
 } from "./quiz.js";
 import { accessCodesStorage } from "./accessCodesStorage.js";
 import { completedUsersStorage } from "./completedUsersStorage.js";
+import { startKeepAlive, createHealthServer } from "./keepAlive.js";
 
 type QuizState = {
   currentQuestionIndex: number;
@@ -46,12 +47,11 @@ const quizStates = new Map<number, QuizState>();
 const accessRequiredMessage = "Для доступа к квесту нужен одноразовый код из сертификата или QR-кода.";
 const lockedUserMessage = "Ты уже начал или прошёл квест. Повторное прохождение с этого профиля недоступно.";
 
-createServer((_request, response) => {
-  response.writeHead(200);
-  response.end("Bot is running!");
-}).listen(healthCheckPort, "0.0.0.0", () => {
-  console.log(`Health check listening on port ${healthCheckPort}`);
-});
+// Запускаем health check сервер
+const healthServer = createHealthServer();
+
+// Запускаем keep-alive сервис для предотвращения сна на Render
+const keepAliveService = startKeepAlive();
 
 const normalizeText = (text: string) => text.trim().toLowerCase();
 
@@ -420,5 +420,11 @@ bot.on(message("text"), async (ctx) => {
 
 bot.launch();
 
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+process.once("SIGINT", () => {
+  keepAliveService.stop();
+  bot.stop("SIGINT");
+});
+process.once("SIGTERM", () => {
+  keepAliveService.stop();
+  bot.stop("SIGTERM");
+});

@@ -10,10 +10,12 @@
   },
   "dependencies": {
     "dotenv": "latest",
-    "telegraf": "latest"
+    "telegraf": "latest",
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@types/node": "latest",
+    "@types/node-fetch": "^2.6.11",
     "tsx": "latest",
     "typescript": "latest"
   }
